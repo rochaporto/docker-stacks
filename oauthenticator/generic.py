@@ -44,6 +44,11 @@ class GenericOAuthenticator(OAuthenticator):
         config=True,
         help="Userdata url to get user data login information"
     )
+    groupdata_url = Unicode(
+        os.environ.get('OAUTH2_GROUPDATA_URL', ''),
+        config=True,
+        help="Url to get user group data"
+    )
     token_url = Unicode(
         os.environ.get('OAUTH2_TOKEN_URL', ''),
         config=True,
@@ -72,6 +77,11 @@ class GenericOAuthenticator(OAuthenticator):
         os.environ.get('OAUTH2_TLS_VERIFY', 'True').lower() in {'true', '1'},
         config=True,
         help="Disable TLS verification on http request"
+    )
+
+   group_whitelist = Set(
+        config=True,
+        help="Automatically whitelist members of selected groups",
     )
 
     @gen.coroutine
@@ -144,6 +154,13 @@ class GenericOAuthenticator(OAuthenticator):
         if not resp_json.get(self.username_key):
             self.log.error("OAuth user contains no key %s: %s", self.username_key, resp_json)
             return
+        username = resp_json.get(self.username_key)
+
+        if self.group_whitelist:
+            user_in_group = yield self._check_group_whitelist(username, headers)
+            if not user_in_group:
+                self.log.warning("%s not in group whitelist", username)
+                return None
 
         return {
             'name': resp_json.get(self.username_key),
@@ -155,6 +172,20 @@ class GenericOAuthenticator(OAuthenticator):
             }
         }
 
+    @gen.coroutine
+    def _check_group_whitelist(self, username):
+        req = HTTPRequest(url,
+                          method=self.userdata_method,
+                          headers=headers,
+                          validate_cert=self.tls_verify,
+                          )
+        resp = yield http_client.fetch(req)
+        resp_json = json.loads(resp.body.decode('utf8', 'replace'))
+        user_groups = resp_json.get('groups')
+        for group in self.group_whitelist:
+            if group in user_groups:
+                return True  # user _is_ in group
+        return False
 
 class LocalGenericOAuthenticator(LocalAuthenticator, GenericOAuthenticator):
 
